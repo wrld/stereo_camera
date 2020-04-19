@@ -33,6 +33,7 @@ class StereoMatch {
   int feature_method = 1;
   //! Intrinsic parameters
   Mat M1, D1, M2, D2;
+  Mat img_l, img_r;
   //! Extrinsic parameters
   Mat R, T, R1, P1, R2, P2;
   //! disparity map and depth map
@@ -63,4 +64,5 @@ class StereoMatch {
   void CalcCorners(const Mat& H, const Mat& src);
   void stitchImage(Mat src1, Mat src2);
   void OptimizeSeam(Mat& img1, Mat& trans, Mat& dst);
+  void Match();
 };

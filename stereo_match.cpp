@@ -166,13 +166,15 @@ void StereoMatch::featurematch(Mat src1, Mat src2) {
     pic2.push_back(keypoints2[matches[i].trainIdx].pt);
   }
   vector<unsigned char> mark(pic1.size());
+  // find homography for right to left
   transH = findHomography(pic1, pic2, CV_RANSAC, 5, mark, 500);
+  // find essential mat for right to left
   Mat E = cv::findEssentialMat(pic1, pic2, camera_matrix, CV_RANSAC);
   cv::Mat R1, R2, t;
   cv::decomposeEssentialMat(E, R1, R2, t);
   // decomposeHomographyMat(transM, camera_matrix, R3, t3, noArray());
   this->R = R1.clone();
-  this->T = -t.clone();
+  this->T = t.clone();
   cout << "R" << R << endl;
   cout << "T" << T << endl;
 }
@@ -194,20 +196,12 @@ void StereoMatch::stitchImage(Mat src1, Mat src2) {
   OptimizeSeam(dst2, tempP, matchP);
   resize(matchP, matchP, Size(matchP.cols * 0.2, matchP.rows * 0.2));
   imshow("result", matchP);
+  // imwrite("/home/gjx/opencv/open/stereo_camera/result.jpg", matchP);
 }
 
 void StereoMatch::Process(cv::Mat img_l, cv::Mat img_r) {
-  int method = STEREO_SGBM;
-  int SADWindowSize, numberOfDisparities;
-  bool no_display;
-  float scale;
-
-  Ptr<StereoBM> bm = StereoBM::create(16, 9);
-  Ptr<StereoSGBM> sgbm = StereoSGBM::create(0, 16, 3);
-
   Size img_size = img_l.size();
 
-  Rect roi1, roi2;
   cv::Mat Q;
   cout << "start" << endl;
   //图像矫正 摆正 计算
@@ -223,9 +217,47 @@ void StereoMatch::Process(cv::Mat img_l, cv::Mat img_r) {
   cv::Mat img1r, img2r;
   cv::remap(img_l, img1r, map11, map12, INTER_LINEAR);
   cv::remap(img_r, img2r, map21, map22, INTER_LINEAR);
-  img_l = img1r;
-  img_r = img2r;
-
+  this->img_l = img1r;
+  this->img_r = img2r;
+  resize(img1r, img1r, Size(img1r.cols * 0.2, img1r.rows * 0.2));
+  resize(img2r, img2r, Size(img2r.cols * 0.2, img2r.rows * 0.2));
+  imshow("left", img1r);
+  imshow("right", img2r);
+}
+void Match2(Mat left, Mat right) {
+  Mat disp;
+  int mindisparity = 0;
+  int ndisparities = 64;
+  int SADWindowSize = 25;
+  // SGBM
+  cv::Ptr<cv::StereoSGBM> sgbm =
+      cv::StereoSGBM::create(mindisparity, ndisparities, SADWindowSize);
+  int P1 = 8 * left.channels() * SADWindowSize * SADWindowSize;
+  int P2 = 32 * left.channels() * SADWindowSize * SADWindowSize;
+  sgbm->setP1(P1);
+  sgbm->setP2(P2);
+  sgbm->setPreFilterCap(15);
+  sgbm->setUniquenessRatio(10);
+  sgbm->setSpeckleRange(2);
+  sgbm->setSpeckleWindowSize(100);
+  sgbm->setDisp12MaxDiff(1);
+  // sgbm->setMode(cv::StereoSGBM::MODE_HH);
+  sgbm->compute(left, right, disp);
+  disp.convertTo(disp, CV_32F, 1.0 / 16);  //除以16得到真实视差值
+  Mat disp8U = Mat(disp.rows, disp.cols, CV_8UC1);  //显示
+  normalize(disp, disp8U, 0, 255, NORM_MINMAX, CV_8UC1);
+  resize(disp8U, disp8U, Size(disp8U.cols * 0.2, disp8U.rows * 0.2));
+  imshow("result", disp8U);
+}
+void StereoMatch::Match() {
+  Ptr<StereoBM> bm = StereoBM::create(16, 9);
+  Ptr<StereoSGBM> sgbm = StereoSGBM::create(0, 16, 3);
+  int method = STEREO_SGBM;
+  Rect roi1, roi2;
+  Size img_size = img_l.size();
+  int SADWindowSize, numberOfDisparities;
+  bool no_display;
+  float scale;
   numberOfDisparities = numberOfDisparities > 0
                             ? numberOfDisparities
                             : ((img_size.width / 8) + 15) & -16;
@@ -249,27 +281,21 @@ void StereoMatch::Process(cv::Mat img_l, cv::Mat img_r) {
     case STEREO_SGBM:
       // method 2:SBGM
       sgbm->setPreFilterCap(63);
-      int sgbmWinSize = SADWindowSize > 0 ? SADWindowSize : 3;
+      int sgbmWinSize = 5;       //根据实际情况自己设定
+      int NumDisparities = 416;  //根据实际情况自己设定
+      int UniquenessRatio = 6;   //根据实际情况自己设定
       sgbm->setBlockSize(sgbmWinSize);
-
       int cn = img_l.channels();
 
       sgbm->setP1(8 * cn * sgbmWinSize * sgbmWinSize);
       sgbm->setP2(32 * cn * sgbmWinSize * sgbmWinSize);
-      sgbm->setMinDisparity(
-          0);  //是控制匹配搜索的第一个参数，代表了匹配搜索从哪里开始
-      sgbm->setNumDisparities(numberOfDisparities);  //表示最大搜索视差数
-      sgbm->setUniquenessRatio(10);                  //表示匹配功能函数
+      sgbm->setMinDisparity(0);
+      sgbm->setNumDisparities(NumDisparities);
+      sgbm->setUniquenessRatio(UniquenessRatio);
       sgbm->setSpeckleWindowSize(100);
-      sgbm->setSpeckleRange(32);
+      sgbm->setSpeckleRange(10);
       sgbm->setDisp12MaxDiff(1);
-      if (method == STEREO_HH)
-        sgbm->setMode(StereoSGBM::MODE_HH);
-      else if (method == STEREO_SGBM)
-        sgbm->setMode(StereoSGBM::MODE_SGBM);
-      else if (method == STEREO_3WAY)
-        sgbm->setMode(StereoSGBM::MODE_SGBM_3WAY);
-      break;
+      sgbm->setMode(StereoSGBM::MODE_SGBM);
   }
   cout << "666" << endl;
   // Mat img1p, img2p, dispp;
@@ -417,8 +443,8 @@ void StereoMatch::insertDepth32f(cv::Mat& depth) {
   }
 }
 int main() {
-  Mat src = imread("/home/gjx/opencv/open/stereo_camera/2.jpg");
-  Mat distortion = src.clone();
+  // Mat src = imread("/home/gjx/opencv/open/stereo_camera/2.jpg");
+  // Mat distortion = src.clone();
   Mat camera_matrix = Mat(3, 3, CV_32FC1);
   Mat distortion_coefficients;
 
@@ -427,9 +453,9 @@ int main() {
   startTime = clock();
   vector<Mat> srcs;
   // left
-  Mat src1 = imread("/home/gjx/opencv/open/stereo_camera/homography/1.jpg");
+  Mat src1 = imread("/home/gjx/opencv/open/stereo_camera/15.jpg");
   // right
-  Mat src2 = imread("/home/gjx/opencv/open/stereo_camera/homography/2.jpg");
+  Mat src2 = imread("/home/gjx/opencv/open/stereo_camera/14.jpg");
 
   if (src1.data == NULL || src2.data == NULL) {
     cout << "No exist" << endl;
@@ -439,13 +465,15 @@ int main() {
   StereoMatch st;
   cout << "param init" << endl;
   st.Init(1);
-  st.featurematch(src2, src1);
+  // st.featurematch(src2, src1);
+
   // st.stitchImage(src2, src1);
   // endTime = clock();  //计时结束
   // cout << "The run time is: " << (double)(endTime - startTime) /
   // CLOCKS_PER_SEC
   //  << "s" << endl;
 
-  st.Process(src1, src2);
+  // st.Process(src1, src2);
+  Match2(src1, src2);
   waitKey(0);
 }
