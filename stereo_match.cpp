@@ -205,13 +205,6 @@ void StereoMatch::Process(cv::Mat img_l, cv::Mat img_r) {
   Ptr<StereoBM> bm = StereoBM::create(16, 9);
   Ptr<StereoSGBM> sgbm = StereoSGBM::create(0, 16, 3);
 
-  // if (img_l.empty()) {
-  //   ROS_ERROR("[dvision] Left frames not detect");
-  // }
-  // if (img_r.empty()) {
-  //   ROS_ERROR("[dvision] Right frames not detect");
-  // }
-
   Size img_size = img_l.size();
 
   Rect roi1, roi2;
@@ -316,16 +309,6 @@ void StereoMatch::Process(cv::Mat img_l, cv::Mat img_r) {
   // }
 }
 
-/*
- *disparity to depth
- *input:
- *　　dispMap ----视差图，8位单通道，CV_8UC1,视差图单位是像素
- *　　K       ----内参矩阵，float类型
- *output:
- *　　depthMap ----深度图，16位无符号单通道，CV_16UC1，深度图单位是毫米
- *
- *   f * baseline / disparity
- */
 void StereoMatch::disp2Depth(cv::Mat dispMap, cv::Mat& depthMap, cv::Mat K) {
   int type = dispMap.type();
 
@@ -438,7 +421,7 @@ int main() {
   Mat distortion = src.clone();
   Mat camera_matrix = Mat(3, 3, CV_32FC1);
   Mat distortion_coefficients;
-  // Mat R, t, R1, R2, P1, P2, Q;
+
   clock_t startTime, endTime;
 
   startTime = clock();
@@ -447,8 +430,7 @@ int main() {
   Mat src1 = imread("/home/gjx/opencv/open/stereo_camera/homography/1.jpg");
   // right
   Mat src2 = imread("/home/gjx/opencv/open/stereo_camera/homography/2.jpg");
-  // resize(src1, src1, Size(640, 480));
-  // resize(src2, src2, Size(640, 480));
+
   if (src1.data == NULL || src2.data == NULL) {
     cout << "No exist" << endl;
     return -1;
@@ -466,66 +448,4 @@ int main() {
 
   st.Process(src1, src2);
   waitKey(0);
-  //矫正
-  // cv::stereoRectify(camera_matrix, distortion_coefficients, camera_matrix,
-  //                   distortion_coefficients, src1.size(), R, t, R1, R2, P1,
-  //                   P2, Q);
-  // // undistort(src, distortion, camera_matrix, distortion_coefficients);
-  // // cout << "end" << endl;
-  // // imshow("origin", src);
-  // // imshow("undistorted", distortion);
-  // // cv::stereoRectify(camera_matrix, distortion_coefficients, camera_matrix,
-  // //                   distortion_coefficients, src1.size(), R, t, R1, R2,
-  // P1,
-  // //                   P2, Q);
-
-  // cv::Mat map11, map12, map21, map22;
-
-  // cv::initUndistortRectifyMap(P1(cv::Rect(0, 0, 3, 3)),
-  // distortion_coefficients,
-  //                             R1, P1(cv::Rect(0, 0, 3, 3)), src1.size(),
-  //                             CV_32FC1, map11, map12);
-  // cv::initUndistortRectifyMap(P2(cv::Rect(0, 0, 3, 3)),
-  // distortion_coefficients,
-  //                             R2, P2(cv::Rect(0, 0, 3, 3)), src2.size(),
-  //                             CV_32FC1, map21, map22);
-  // //图像矫正CV_16SC2
-  // cv::Mat img1r, img2r;
-  // cv::remap(src1, img1r, map11, map12, INTER_LINEAR);
-
-  // cv::remap(src2, img2r, map21, map22, INTER_LINEAR);
-  // src1 = img1r;
-  // src2 = img2r;
-  // resize(img1r, img1r, Size(src1.cols * 0.2, src2.rows * 0.2));
-  // resize(img2r, img2r, Size(src1.cols * 0.2, src2.rows * 0.2));
-
-  // imshow("src1", img1r);
-  // imshow("src2", img2r);
-  // int numberOfDisparities = ((src1.cols / 8) + 15) & -16;
-  // cv::Ptr<cv::StereoSGBM> sgbm = cv::StereoSGBM::create(0, 16, 3);
-  // sgbm->setPreFilterCap(32);
-  // int SADWindowSize = 9;
-  // int sgbmWinSize = SADWindowSize > 0 ? SADWindowSize : 3;
-  // sgbm->setBlockSize(sgbmWinSize);
-  // int cn = src1.channels();
-  // sgbm->setP1(8 * cn * sgbmWinSize * sgbmWinSize);
-  // sgbm->setP2(32 * cn * sgbmWinSize * sgbmWinSize);
-  // sgbm->setMinDisparity(0);
-  // sgbm->setNumDisparities(numberOfDisparities);
-  // sgbm->setUniquenessRatio(10);
-  // sgbm->setSpeckleWindowSize(100);
-  // sgbm->setSpeckleRange(32);
-  // sgbm->setDisp12MaxDiff(1);
-  // cv::Mat disp, disp8, depth, disp2;
-  // int alg = STEREO_SGBM;
-  // if (alg == STEREO_HH)
-  //   sgbm->setMode(cv::StereoSGBM::MODE_HH);
-  // else if (alg == STEREO_SGBM)
-  //   sgbm->setMode(cv::StereoSGBM::MODE_SGBM);
-  // else if (alg == STEREO_3WAY)
-  //   sgbm->setMode(cv::StereoSGBM::MODE_SGBM_3WAY);
-  // sgbm->compute(src1, src2, disp);
-  // resize(disp, disp, Size(disp.cols * 0.2, disp.rows * 0.2));
-  // imshow("disp", disp);
-  // waitKey(0);
 }
