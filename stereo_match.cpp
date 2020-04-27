@@ -35,6 +35,140 @@ void StereoMatch::Init(int choice) {
   file_storage.release();
 }
 
+void StereoMatch::find_feature_matches(const Mat& img_1, const Mat& img_2,
+                                       std::vector<KeyPoint>& keypoints_1,
+                                       std::vector<KeyPoint>& keypoints_2,
+                                       std::vector<DMatch>& matches) {
+  //-- 初始化
+  Mat descriptors_1, descriptors_2;
+  // used in OpenCV3
+  Ptr<FeatureDetector> detector = ORB::create();
+  Ptr<DescriptorExtractor> descriptor = ORB::create();
+  // use this if you are in OpenCV2
+  // Ptr<FeatureDetector> detector = FeatureDetector::create ( "ORB" );
+  // Ptr<DescriptorExtractor> descriptor = DescriptorExtractor::create ( "ORB"
+  // );
+  Ptr<DescriptorMatcher> matcher =
+      DescriptorMatcher::create("BruteForce-Hamming");
+  //-- 第一步:检测 Oriented FAST 角点位置
+  detector->detect(img_1, keypoints_1);
+  detector->detect(img_2, keypoints_2);
+
+  //-- 第二步:根据角点位置计算 BRIEF 描述子
+  descriptor->compute(img_1, keypoints_1, descriptors_1);
+  descriptor->compute(img_2, keypoints_2, descriptors_2);
+
+  //-- 第三步:对两幅图像中的BRIEF描述子进行匹配，使用 Hamming 距离
+  vector<DMatch> match;
+  // BFMatcher matcher ( NORM_HAMMING );
+  matcher->match(descriptors_1, descriptors_2, match);
+
+  //-- 第四步:匹配点对筛选
+  double min_dist = 10000, max_dist = 0;
+
+  //找出所有匹配之间的最小距离和最大距离,
+  //即是最相似的和最不相似的两组点之间的距离
+  for (int i = 0; i < descriptors_1.rows; i++) {
+    double dist = match[i].distance;
+    if (dist < min_dist) min_dist = dist;
+    if (dist > max_dist) max_dist = dist;
+  }
+
+  printf("-- Max dist : %f \n", max_dist);
+  printf("-- Min dist : %f \n", min_dist);
+
+  //当描述子之间的距离大于两倍的最小距离时,即认为匹配有误.但有时候最小距离会非常小,设置一个经验值30作为下限.
+  for (int i = 0; i < descriptors_1.rows; i++) {
+    if (match[i].distance <= max(2 * min_dist, 30.0)) {
+      matches.push_back(match[i]);
+    }
+  }
+}
+
+void StereoMatch::pose_estimation_2d2d(const std::vector<KeyPoint>& keypoints_1,
+                                       const std::vector<KeyPoint>& keypoints_2,
+                                       const std::vector<DMatch>& matches,
+                                       Mat& R, Mat& t) {
+  // 相机内参,TUM Freiburg2
+  Mat K = (Mat_<double>(3, 3) << 520.9, 0, 325.1, 0, 521.0, 249.7, 0, 0, 1);
+
+  //-- 把匹配点转换为vector<Point2f>的形式
+  vector<Point2f> points1;
+  vector<Point2f> points2;
+
+  for (int i = 0; i < (int)matches.size(); i++) {
+    points1.push_back(keypoints_1[matches[i].queryIdx].pt);
+    points2.push_back(keypoints_2[matches[i].trainIdx].pt);
+  }
+
+  //-- 计算基础矩阵
+  Mat fundamental_matrix;
+  fundamental_matrix = findFundamentalMat(points1, points2, CV_FM_8POINT);
+  cout << "fundamental_matrix is " << endl << fundamental_matrix << endl;
+
+  //-- 计算本质矩阵
+  Point2d principal_point(325.1, 249.7);  //相机主点, TUM dataset标定值
+  int focal_length = 521;                 //相机焦距, TUM dataset标定值
+  Mat essential_matrix;
+  essential_matrix =
+      findEssentialMat(points1, points2, focal_length, principal_point);
+  cout << "essential_matrix is " << endl << essential_matrix << endl;
+
+  //-- 计算单应矩阵
+  Mat homography_matrix;
+  homography_matrix = findHomography(points1, points2, RANSAC, 3);
+  cout << "homography_matrix is " << endl << homography_matrix << endl;
+  this->transH = homography_matrix;
+  //-- 从本质矩阵中恢复旋转和平移信息.
+  recoverPose(essential_matrix, points1, points2, R, t, focal_length,
+              principal_point);
+  this->R = R;
+  this->T = t;
+  cout << "R is " << endl << R << endl;
+  cout << "t is " << endl << t << endl;
+}
+
+void StereoMatch::triangulation(const vector<KeyPoint>& keypoint_1,
+                                const vector<KeyPoint>& keypoint_2,
+                                const std::vector<DMatch>& matches,
+                                const Mat& R, const Mat& t,
+                                vector<Point3d>& points) {
+  Mat T1 = (Mat_<float>(3, 4) << 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0);
+  Mat T2 = (Mat_<float>(3, 4) << R.at<double>(0, 0), R.at<double>(0, 1),
+            R.at<double>(0, 2), t.at<double>(0, 0), R.at<double>(1, 0),
+            R.at<double>(1, 1), R.at<double>(1, 2), t.at<double>(1, 0),
+            R.at<double>(2, 0), R.at<double>(2, 1), R.at<double>(2, 2),
+            t.at<double>(2, 0));
+
+  Mat K = (Mat_<double>(3, 3) << 520.9, 0, 325.1, 0, 521.0, 249.7, 0, 0, 1);
+  vector<Point2f> pts_1, pts_2;
+  for (DMatch m : matches) {
+    // 将像素坐标转换至相机坐标
+    pts_1.push_back(pixel2cam(keypoint_1[m.queryIdx].pt, K));
+    pts_2.push_back(pixel2cam(keypoint_2[m.trainIdx].pt, K));
+  }
+
+  Mat pts_4d;
+  cv::triangulatePoints(T1, T2, pts_1, pts_2, pts_4d);
+
+  // 转换成非齐次坐标
+  for (int i = 0; i < pts_4d.cols; i++) {
+    Mat x = pts_4d.col(i);
+    x /= x.at<float>(
+        3,
+        0);  // 归一化
+             // //金戈大王注：此处的归一化是指从齐次坐标变换到非齐次坐标。而不是变换到归一化平面。
+    Point3d p(x.at<float>(0, 0), x.at<float>(1, 0), x.at<float>(2, 0));
+    dist.push_back(x.at<float>(2, 0));
+    points.push_back(p);
+  }
+}
+
+Point2f StereoMatch::pixel2cam(const Point2d& p, const Mat& K) {
+  return Point2f((p.x - K.at<double>(0, 2)) / K.at<double>(0, 0),
+                 (p.y - K.at<double>(1, 2)) / K.at<double>(1, 1));
+}
+
 void StereoMatch::CalcCorners(const Mat& H, const Mat& src) {
   double v2[] = {0, 0, 1};           //左上角
   double v1[3];                      //变换后的坐标值
@@ -166,6 +300,11 @@ void StereoMatch::featurematch(Mat src1, Mat src2) {
     pic2.push_back(keypoints2[matches[i].trainIdx].pt);
   }
   vector<unsigned char> mark(pic1.size());
+  Mat img;
+  drawMatches(src1, keypoints1, src2, keypoints2, matches, img);
+  resize(img, img, Size(img.cols * 0.2, img.rows * 0.2));
+  imshow("match1", img);
+
   // find homography for right to left
   transH = findHomography(pic1, pic2, CV_RANSAC, 5, mark, 500);
   // find essential mat for right to left
@@ -177,6 +316,7 @@ void StereoMatch::featurematch(Mat src1, Mat src2) {
   this->T = t.clone();
   cout << "R" << R << endl;
   cout << "T" << T << endl;
+  // pose_estimation_2d2d(keypoints1, keypoints2, matches, R1, t);
 }
 
 void StereoMatch::stitchImage(Mat src1, Mat src2) {
@@ -453,10 +593,10 @@ int main() {
   startTime = clock();
   vector<Mat> srcs;
   // left
-  Mat src1 = imread("/home/gjx/opencv/open/stereo_camera/15.jpg");
+  Mat src1 = imread("/home/gjx/opencv/open/stereo_camera/16.jpg");
   // right
-  Mat src2 = imread("/home/gjx/opencv/open/stereo_camera/14.jpg");
-
+  Mat src2 = imread("/home/gjx/opencv/open/stereo_camera/17.jpg");
+  Mat img_match;
   if (src1.data == NULL || src2.data == NULL) {
     cout << "No exist" << endl;
     return -1;
@@ -467,6 +607,49 @@ int main() {
   st.Init(1);
   // st.featurematch(src2, src1);
 
+  vector<KeyPoint> keypoints_1, keypoints_2;
+  vector<DMatch> matches;
+  st.find_feature_matches(src2, src1, keypoints_1, keypoints_2, matches);
+  cout << "一共找到了" << matches.size() << "组匹配点" << endl;
+  drawMatches(src2, keypoints_1, src1, keypoints_2, matches, img_match);
+  resize(img_match, img_match,
+         Size(img_match.cols * 0.2, img_match.rows * 0.2));
+  imshow("match", img_match);
+  //-- 估计两张图像间运动
+  Mat R, t;
+  st.pose_estimation_2d2d(keypoints_1, keypoints_2, matches, R, t);
+
+  //-- 三角化
+  vector<Point3d> points;
+  st.triangulation(keypoints_1, keypoints_2, matches, R, t, points);
+
+  //-- 验证三角化点与特征点的重投影关系
+  Mat K = st.camera_matrix;
+  double max_dis = *(std::max_element(std::begin(st.dist), std::end(st.dist)));
+  double min_dis = *(std::min_element(std::begin(st.dist), std::end(st.dist)));
+
+  for (int i = 0; i < matches.size(); i++) {
+    Point2d pt1_cam = st.pixel2cam(keypoints_1[matches[i].queryIdx].pt, K);
+    Point2d pt1_cam_3d(points[i].x / points[i].z, points[i].y / points[i].z);
+    int color = 255 * (points[i].z / (max_dis - min_dis));
+    cout << "point in the first camera frame: " << pt1_cam << endl;
+    cout << "point projected from 3D " << pt1_cam_3d << ", d=" << points[i].z
+         << "color" << color << endl;
+
+    circle(src2, keypoints_1[matches[i].queryIdx].pt, 20, Scalar(color), -1);
+    // 第二个图
+    Point2f pt2_cam = st.pixel2cam(keypoints_2[matches[i].trainIdx].pt, K);
+    Mat pt2_trans =
+        R * (Mat_<double>(3, 1) << points[i].x, points[i].y, points[i].z) + t;
+    pt2_trans /= pt2_trans.at<double>(2, 0);
+
+    // cout << "point in the second camera frame: " << pt2_cam << endl;
+    // cout << "point reprojected from second frame: " << pt2_trans.t() << endl;
+    // cout << endl;
+  }
+
+  resize(src2, src2, Size(src2.cols * 0.2, src2.rows * 0.2));
+  imshow("dist", src2);
   // st.stitchImage(src2, src1);
   // endTime = clock();  //计时结束
   // cout << "The run time is: " << (double)(endTime - startTime) /
@@ -474,6 +657,6 @@ int main() {
   //  << "s" << endl;
 
   // st.Process(src1, src2);
-  Match2(src1, src2);
+  // Match2(src1, src2);
   waitKey(0);
 }

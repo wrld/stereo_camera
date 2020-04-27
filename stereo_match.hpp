@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+#include <algorithm>
 #include <boost/format.hpp>
 #include <iostream>
 #include <memory>
@@ -30,6 +31,7 @@ class StereoMatch {
     STEREO_VAR = 3,
     STEREO_3WAY = 4
   };
+  vector<double> dist;
   int feature_method = 1;
   //! Intrinsic parameters
   Mat M1, D1, M2, D2;
@@ -65,4 +67,18 @@ class StereoMatch {
   void stitchImage(Mat src1, Mat src2);
   void OptimizeSeam(Mat& img1, Mat& trans, Mat& dst);
   void Match();
+  void find_feature_matches(const Mat& img_1, const Mat& img_2,
+                            std::vector<KeyPoint>& keypoints_1,
+                            std::vector<KeyPoint>& keypoints_2,
+                            std::vector<DMatch>& matches);
+
+  void pose_estimation_2d2d(const std::vector<KeyPoint>& keypoints_1,
+                            const std::vector<KeyPoint>& keypoints_2,
+                            const std::vector<DMatch>& matches, Mat& R, Mat& t);
+
+  void triangulation(const vector<KeyPoint>& keypoint_1,
+                     const vector<KeyPoint>& keypoint_2,
+                     const std::vector<DMatch>& matches, const Mat& R,
+                     const Mat& t, vector<Point3d>& points);
+  Point2f pixel2cam(const Point2d& p, const Mat& K);
 };
